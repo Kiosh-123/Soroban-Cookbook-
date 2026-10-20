@@ -24,6 +24,7 @@ fn setup() -> (
     Address,
 ) {
     let env = Env::default();
+    env.mock_all_auths();
     let owner = Address::generate(&env);
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
@@ -133,4 +134,60 @@ fn test_oracle_update_requires_pool_price() {
     oracle.update();
 
     assert_eq!(oracle.current_price(), pool.current_price_a_in_b());
+}
+
+#[test]
+#[should_panic]
+fn test_pool_initialize_requires_owner_auth() {
+    use soroban_sdk::{testutils::MockAuth, testutils::MockAuthInvoke, IntoVal};
+
+    let env = Env::default();
+    let owner = Address::generate(&env);
+    let attacker = Address::generate(&env);
+
+    // mock_all_auths only for token registration; we'll override before the targeted call.
+    env.mock_all_auths();
+    let token_a_id = register_token(&env, &owner, &Symbol::short("TokenA"), &Symbol::short("TKA"));
+    let token_b_id = register_token(&env, &owner, &Symbol::short("TokenB"), &Symbol::short("TKB"));
+
+    let pool_id = env.register_contract(None, crate::AmmPoolContract);
+    let pool_client = AmmPoolContractClient::new(&env, &pool_id);
+
+    // Authorize only the attacker — owner auth is absent, so require_auth() must panic.
+    env.mock_auths(&[MockAuth {
+        address: &attacker,
+        invoke: &MockAuthInvoke {
+            contract: &pool_id,
+            fn_name: "initialize",
+            args: (&owner, &token_a_id, &token_b_id).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    pool_client.initialize(&owner, &token_a_id, &token_b_id);
+}
+
+#[test]
+#[should_panic]
+fn test_oracle_initialize_requires_owner_auth() {
+    use soroban_sdk::{testutils::MockAuth, testutils::MockAuthInvoke, IntoVal};
+
+    let env = Env::default();
+    let owner = Address::generate(&env);
+    let attacker = Address::generate(&env);
+
+    let pool_id = env.register_contract(None, crate::AmmPoolContract);
+    let oracle_id = env.register_contract(None, crate::AmmOracleContract);
+    let oracle_client = AmmOracleContractClient::new(&env, &oracle_id);
+
+    // Authorize only the attacker — owner auth is absent, so require_auth() must panic.
+    env.mock_auths(&[MockAuth {
+        address: &attacker,
+        invoke: &MockAuthInvoke {
+            contract: &oracle_id,
+            fn_name: "initialize_oracle",
+            args: (&owner, &pool_id).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    oracle_client.initialize_oracle(&owner, &pool_id);
 }
